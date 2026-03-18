@@ -1,180 +1,181 @@
+"""
+Expense Tracker MCP Server - Simple Version
+Connected to Supabase (PostgreSQL)
+Features: Add, List, Edit, Delete expenses with User ID isolation
+"""
+
 from fastmcp import FastMCP
 import os
-import aiosqlite
-import tempfile
+from dotenv import load_dotenv
+import asyncpg
 
-# Use temporary directory which should be writable
-TEMP_DIR = tempfile.gettempdir()
-DB_PATH = os.path.join(TEMP_DIR, "expenses.db")
-
-CATEGORIES_PATH = os.path.join(os.path.dirname(__file__), "categories.json")
-
-print(f"Database path: {DB_PATH}")
+load_dotenv()
 
 mcp = FastMCP("ExpenseTracker")
 
-def init_db():  # Keep as sync for initialization
-    try:
-        # Use synchronous sqlite3 just for initialization
-        import sqlite3
-        with sqlite3.connect(DB_PATH) as c:
-            c.execute("PRAGMA journal_mode=WAL")
-            
-            # Create users table
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS users(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    phone_number TEXT UNIQUE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create expenses table with user_id reference
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS expenses(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    date TEXT NOT NULL,
-                    amount REAL NOT NULL,
-                    category TEXT NOT NULL,
-                    subcategory TEXT DEFAULT '',
-                    note TEXT DEFAULT '',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(user_id) REFERENCES users(id)
-                )
-            """)
-            
-            # Create index for faster queries
-            c.execute("CREATE INDEX IF NOT EXISTS idx_expenses_user_id ON expenses(user_id)")
-            
-            print("Database initialized successfully with user support")
-    except Exception as e:
-        print(f"Database initialization error: {e}")
-        raise
+# Database configuration
+DB_URL = "https://mcp.supabase.com/mcp?project_ref=otufqjomotnlnansjtkm"
+if not DB_URL:
+    raise ValueError("DATABASE_URL not set in .env")
 
-# Initialize database synchronously at module load
-init_db()
+# Global connection pool
+db_pool = None
+
+async def init_db():
+    """Initialize database connection pool"""
+    global db_pool
+    if db_pool is None:
+        db_pool = await asyncpg.create_pool(DB_URL)
+        print("✓ Connected to Supabase")
+
+async def get_conn():
+    """Get connection from pool"""
+    await init_db()
+    return await db_pool.acquire()
+
+# ============================================================================
+# TOOLS
+# ============================================================================
 
 @mcp.tool()
-async def add_expense(phone_number: str, date: str, amount: float, category: str, subcategory: str = "", note: str = ""):
-    '''Add a new expense entry for a specific user (phone number).'''
+async def add_expense(user_id: str, date: str, amount: float, category: str, note: str = ""):
+    """Add a new expense. User ID isolates data."""
     try:
-        async with aiosqlite.connect(DB_PATH) as c:
-            # Get or create user
-            await c.execute(
-                "INSERT OR IGNORE INTO users(phone_number) VALUES (?)",
-                (phone_number,)
-            )
-            
-            # Get user_id
-            cur = await c.execute("SELECT id FROM users WHERE phone_number = ?", (phone_number,))
-            user = await cur.fetchone()
-            user_id = user[0]
-            
-            # Insert expense
-            cur = await c.execute(
-                "INSERT INTO expenses(user_id, date, amount, category, subcategory, note) VALUES (?,?,?,?,?,?)",
-                (user_id, date, amount, category, subcategory, note)
-            )
-            expense_id = cur.lastrowid
-            await c.commit()
-            
-            return {"status": "success", "id": expense_id, "user_id": user_id, "message": "Expense added successfully"}
-    except Exception as e:
-        if "readonly" in str(e).lower():
-            return {"status": "error", "message": "Database is in read-only mode."}
-        return {"status": "error", "message": f"Database error: {str(e)}"}
-    
-@mcp.tool()
-async def list_expenses(phone_number: str, start_date: str, end_date: str):
-    '''List expense entries for a specific user within a date range.'''
-    try:
-        async with aiosqlite.connect(DB_PATH) as c:
-            # Get user_id from phone_number
-            cur = await c.execute("SELECT id FROM users WHERE phone_number = ?", (phone_number,))
-            user = await cur.fetchone()
-            
-            if not user:
-                return {"status": "error", "message": f"User with phone {phone_number} not found"}
-            
-            user_id = user[0]
-            
-            # Get expenses for this user only
-            cur = await c.execute(
-                """
-                SELECT id, date, amount, category, subcategory, note
-                FROM expenses
-                WHERE user_id = ? AND date BETWEEN ? AND ?
-                ORDER BY date DESC, id DESC
-                """,
-                (user_id, start_date, end_date)
-            )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, r)) for r in await cur.fetchall()]
-    except Exception as e:
-        return {"status": "error", "message": f"Error listing expenses: {str(e)}"}
-
-@mcp.tool()
-async def summarize(phone_number: str, start_date: str, end_date: str, category: str = None):
-    '''Summarize expenses by category for a specific user.'''
-    try:
-        async with aiosqlite.connect(DB_PATH) as c:
-            # Get user_id
-            cur = await c.execute("SELECT id FROM users WHERE phone_number = ?", (phone_number,))
-            user = await cur.fetchone()
-            
-            if not user:
-                return {"status": "error", "message": f"User with phone {phone_number} not found"}
-            
-            user_id = user[0]
-            
-            query = """
-                SELECT category, SUM(amount) AS total_amount, COUNT(*) as count
-                FROM expenses
-                WHERE user_id = ? AND date BETWEEN ? AND ?
-            """
-            params = [user_id, start_date, end_date]
-
-            if category:
-                query += " AND category = ?"
-                params.append(category)
-
-            query += " GROUP BY category ORDER BY total_amount DESC"
-
-            cur = await c.execute(query, params)
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, r)) for r in await cur.fetchall()]
-    except Exception as e:
-        return {"status": "error", "message": f"Error summarizing expenses: {str(e)}"}
-
-@mcp.resource("expense:///categories", mime_type="application/json")
-def categories():
-    try:
-        # Provide default categories if file doesn't exist
-        default_categories = {
-            "categories": [
-                "Food & Dining",
-                "Transportation",
-                "Shopping",
-                "Entertainment",
-                "Bills & Utilities",
-                "Healthcare",
-                "Travel",
-                "Education",
-                "Business",
-                "Other"
-            ]
-        }
-        
+        conn = await get_conn()
         try:
-            with open(CATEGORIES_PATH, "r", encoding="utf-8") as f:
-                return f.read()
-        except FileNotFoundError:
-            import json
-            return json.dumps(default_categories, indent=2)
+            expense_id = await conn.fetchval(
+                """INSERT INTO expenses(user_id, date, amount, category, note)
+                   VALUES($1, $2, $3, $4, $5) RETURNING id""",
+                user_id, date, amount, category, note
+            )
+            return {"status": "success", "id": expense_id, "message": "Expense added"}
+        finally:
+            await db_pool.release(conn)
     except Exception as e:
-        return f'{{"error": "Could not load categories: {str(e)}"}}'
+        return {"status": "error", "message": str(e)}
 
-# Start the server
+@mcp.tool()
+async def list_expenses(user_id: str, start_date: str = None, end_date: str = None):
+    """List all expenses for a user. Filtered by date if provided."""
+    try:
+        conn = await get_conn()
+        try:
+            if start_date and end_date:
+                rows = await conn.fetch(
+                    """SELECT id, date, amount, category, note FROM expenses
+                       WHERE user_id = $1 AND date BETWEEN $2 AND $3
+                       ORDER BY date DESC""",
+                    user_id, start_date, end_date
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT id, date, amount, category, note FROM expenses
+                       WHERE user_id = $1 ORDER BY date DESC""",
+                    user_id
+                )
+            return [dict(row) for row in rows]
+        finally:
+            await db_pool.release(conn)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@mcp.tool()
+async def edit_expense(user_id: str, expense_id: int, amount: float = None, 
+                      category: str = None, note: str = None):
+    """Edit an expense (only if owned by user)."""
+    try:
+        conn = await get_conn()
+        try:
+            # Verify ownership
+            owner = await conn.fetchval(
+                "SELECT user_id FROM expenses WHERE id = $1",
+                expense_id
+            )
+            if owner != user_id:
+                return {"status": "error", "message": "Not authorized"}
+            
+            # Build update query
+            updates = []
+            params = [expense_id]
+            param_num = 2
+            
+            if amount is not None:
+                updates.append(f"amount = ${param_num}")
+                params.append(amount)
+                param_num += 1
+            if category is not None:
+                updates.append(f"category = ${param_num}")
+                params.append(category)
+                param_num += 1
+            if note is not None:
+                updates.append(f"note = ${param_num}")
+                params.append(note)
+                param_num += 1
+            
+            if not updates:
+                return {"status": "error", "message": "No fields to update"}
+            
+            query = f"UPDATE expenses SET {', '.join(updates)} WHERE id = $1"
+            await conn.execute(query, *params)
+            
+            return {"status": "success", "message": "Expense updated"}
+        finally:
+            await db_pool.release(conn)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@mcp.tool()
+async def delete_expense(user_id: str, expense_id: int):
+    """Delete an expense (only if owned by user)."""
+    try:
+        conn = await get_conn()
+        try:
+            # Verify ownership
+            owner = await conn.fetchval(
+                "SELECT user_id FROM expenses WHERE id = $1",
+                expense_id
+            )
+            if owner != user_id:
+                return {"status": "error", "message": "Not authorized"}
+            
+            await conn.execute("DELETE FROM expenses WHERE id = $1", expense_id)
+            return {"status": "success", "message": "Expense deleted"}
+        finally:
+            await db_pool.release(conn)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@mcp.tool()
+async def get_summary(user_id: str, start_date: str = None, end_date: str = None):
+    """Get expense summary by category."""
+    try:
+        conn = await get_conn()
+        try:
+            if start_date and end_date:
+                rows = await conn.fetch(
+                    """SELECT category, SUM(amount) as total, COUNT(*) as count
+                       FROM expenses
+                       WHERE user_id = $1 AND date BETWEEN $2 AND $3
+                       GROUP BY category ORDER BY total DESC""",
+                    user_id, start_date, end_date
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT category, SUM(amount) as total, COUNT(*) as count
+                       FROM expenses WHERE user_id = $1
+                       GROUP BY category ORDER BY total DESC""",
+                    user_id
+                )
+            return [dict(row) for row in rows]
+        finally:
+            await db_pool.release(conn)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# ============================================================================
+# START SERVER
+# ============================================================================
+
 if __name__ == "__main__":
+    print("Starting Expense Tracker MCP Server")
     mcp.run(transport="http", host="0.0.0.0", port=8081)
