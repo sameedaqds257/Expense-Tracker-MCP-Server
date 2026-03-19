@@ -44,8 +44,7 @@ async def add_expense(
     date: str,
     amount: float,
     category: str,
-    note: str = "",
-    **kwargs                     
+    note: str = ""                   
 ):
     """Add a new expense. User ID isolates data."""
     try:
@@ -92,7 +91,7 @@ async def list_expenses(phone_number: str,
 
 @mcp.tool()
 async def edit_expense(phone_number: str, expense_id: int, amount: float = None, 
-                      category: str = None, note: str = None, **kwargs):
+                      category: str = None, note: str = None):
     """Edit an expense (only if owned by user)."""
     try:
         conn = await get_conn()
@@ -136,7 +135,7 @@ async def edit_expense(phone_number: str, expense_id: int, amount: float = None,
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def delete_expense(phone_number: str, expense_id: int, **kwargs):
+async def delete_expense(phone_number: str, expense_id: int):
     """Delete an expense (only if owned by user)."""
     try:
         conn = await get_conn()
@@ -157,7 +156,7 @@ async def delete_expense(phone_number: str, expense_id: int, **kwargs):
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def get_summary(phone_number: str, start_date: str = None, end_date: str = None, **kwargs):
+async def get_summary(phone_number: str, start_date: str = None, end_date: str = None):
     """Get expense summary by category."""
     try:
         conn = await get_conn()
