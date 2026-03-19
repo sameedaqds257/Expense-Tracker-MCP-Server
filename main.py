@@ -38,7 +38,15 @@ async def get_conn():
 # ============================================================================
 
 @mcp.tool()
-async def add_expense(phone_number: str, date: str, amount: float, category: str, note: str = ""):
+async def add_expense(
+
+    phone_number: str,
+    date: str,
+    amount: float,
+    category: str,
+    note: str = "",
+    **kwargs                     
+):
     """Add a new expense. User ID isolates data."""
     try:
         conn = await get_conn()
@@ -55,7 +63,10 @@ async def add_expense(phone_number: str, date: str, amount: float, category: str
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def list_expenses(phone_number: str, start_date: str = None, end_date: str = None):
+async def list_expenses(phone_number: str,
+                         start_date: str = None,
+                           end_date: str = None,
+                           **kwargs):
     """List all expenses for a user. Filtered by date if provided."""
     try:
         conn = await get_conn()
@@ -81,7 +92,7 @@ async def list_expenses(phone_number: str, start_date: str = None, end_date: str
 
 @mcp.tool()
 async def edit_expense(phone_number: str, expense_id: int, amount: float = None, 
-                      category: str = None, note: str = None):
+                      category: str = None, note: str = None, **kwargs):
     """Edit an expense (only if owned by user)."""
     try:
         conn = await get_conn()
@@ -125,7 +136,7 @@ async def edit_expense(phone_number: str, expense_id: int, amount: float = None,
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def delete_expense(phone_number: str, expense_id: int):
+async def delete_expense(phone_number: str, expense_id: int, **kwargs):
     """Delete an expense (only if owned by user)."""
     try:
         conn = await get_conn()
@@ -146,7 +157,7 @@ async def delete_expense(phone_number: str, expense_id: int):
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def get_summary(phone_number: str, start_date: str = None, end_date: str = None):
+async def get_summary(phone_number: str, start_date: str = None, end_date: str = None, **kwargs):
     """Get expense summary by category."""
     try:
         conn = await get_conn()
