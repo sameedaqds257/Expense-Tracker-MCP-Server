@@ -2,6 +2,7 @@
 Expense Tracker MCP Server - Simple Version
 Connected to Supabase (PostgreSQL)
 Features: Add, List, Edit, Delete expenses with User ID isolation
+UPDATED: Now accepts and ignores extra parameters passed by AI Agent
 """
 
 from fastmcp import FastMCP
@@ -39,14 +40,18 @@ async def get_conn():
 
 @mcp.tool()
 async def add_expense(
-
     phone_number: str,
     date: str,
     amount: float,
     category: str,
-    note: str = ""                   
+    note: str = "",
+    **kwargs  # Accept and ignore any extra parameters passed by AI Agent
 ):
     """Add a new expense. User ID isolates data."""
+    # Log and ignore any extra parameters
+    if kwargs:
+        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
+    
     try:
         conn = await get_conn()
         try:
@@ -91,8 +96,11 @@ async def list_expenses(phone_number: str,
 
 @mcp.tool()
 async def edit_expense(phone_number: str, expense_id: int, amount: float = None, 
-                      category: str = None, note: str = None):
+                      category: str = None, note: str = None, **kwargs):
     """Edit an expense (only if owned by user)."""
+    if kwargs:
+        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
+    
     try:
         conn = await get_conn()
         try:
@@ -135,8 +143,11 @@ async def edit_expense(phone_number: str, expense_id: int, amount: float = None,
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def delete_expense(phone_number: str, expense_id: int):
+async def delete_expense(phone_number: str, expense_id: int, **kwargs):
     """Delete an expense (only if owned by user)."""
+    if kwargs:
+        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
+    
     try:
         conn = await get_conn()
         try:
@@ -156,8 +167,11 @@ async def delete_expense(phone_number: str, expense_id: int):
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def get_summary(phone_number: str, start_date: str = None, end_date: str = None):
+async def get_summary(phone_number: str, start_date: str = None, end_date: str = None, **kwargs):
     """Get expense summary by category."""
+    if kwargs:
+        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
+    
     try:
         conn = await get_conn()
         try:
@@ -186,6 +200,6 @@ async def get_summary(phone_number: str, start_date: str = None, end_date: str =
 # START SERVER
 # ============================================================================
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     print("Starting Expense Tracker MCP Server")
     mcp.run(transport="http", host="0.0.0.0", port=8081)
