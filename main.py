@@ -2,7 +2,6 @@
 Expense Tracker MCP Server - Simple Version
 Connected to Supabase (PostgreSQL)
 Features: Add, List, Edit, Delete expenses with User ID isolation
-UPDATED: Now accepts and ignores extra parameters passed by AI Agent
 """
 
 from fastmcp import FastMCP
@@ -39,38 +38,27 @@ async def get_conn():
 # ============================================================================
 
 @mcp.tool()
-async def add_expense(
-    phone_number: str,
-    date: str,
-    amount: float,
-    category: str,
-    note: str = "",
-    **kwargs  # Accept and ignore any extra parameters passed by AI Agent
-):
+async def add_expense(user_id: str, date: str, amount: float, category: str, note: str = ""):
+async def add_expense(phone_number: str, date: str, amount: float, category: str, note: str = ""):
     """Add a new expense. User ID isolates data."""
-    # Log and ignore any extra parameters
-    if kwargs:
-        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
-    
     try:
         conn = await get_conn()
         try:
             expense_id = await conn.fetchval(
+                """INSERT INTO expenses(user_id, date, amount, category, note)
                 """INSERT INTO expenses(phone_number, date, amount, category, note)
                    VALUES($1, $2, $3, $4, $5) RETURNING id""",
+                user_id, date, amount, category, note
                 phone_number, date, amount, category, note
             )
             return {"status": "success", "id": expense_id, "message": "Expense added"}
         finally:
-            await db_pool.release(conn)
-    except Exception as e:
+@@ -55,23 +55,23 @@
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def list_expenses(phone_number: str,
-                         start_date: str = None,
-                           end_date: str = None,
-                           **kwargs):
+async def list_expenses(user_id: str, start_date: str = None, end_date: str = None):
+async def list_expenses(phone_number: str, start_date: str = None, end_date: str = None):
     """List all expenses for a user. Filtered by date if provided."""
     try:
         conn = await get_conn()
@@ -78,116 +66,91 @@ async def list_expenses(phone_number: str,
             if start_date and end_date:
                 rows = await conn.fetch(
                     """SELECT id, date, amount, category, note FROM expenses
+                       WHERE user_id = $1 AND date BETWEEN $2 AND $3
                        WHERE phone_number = $1 AND date BETWEEN $2 AND $3
                        ORDER BY date DESC""",
+                    user_id, start_date, end_date
                     phone_number, start_date, end_date
                 )
             else:
                 rows = await conn.fetch(
                     """SELECT id, date, amount, category, note FROM expenses
+                       WHERE user_id = $1 ORDER BY date DESC""",
+                    user_id
                        WHERE phone_number = $1 ORDER BY date DESC""",
                     phone_number
                 )
             return [dict(row) for row in rows]
         finally:
-            await db_pool.release(conn)
-    except Exception as e:
+@@ -80,18 +80,18 @@
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
+async def edit_expense(user_id: str, expense_id: int, amount: float = None, 
 async def edit_expense(phone_number: str, expense_id: int, amount: float = None, 
-                      category: str = None, note: str = None, **kwargs):
+                      category: str = None, note: str = None):
     """Edit an expense (only if owned by user)."""
-    if kwargs:
-        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
-    
     try:
         conn = await get_conn()
         try:
             # Verify ownership
             owner = await conn.fetchval(
+                "SELECT user_id FROM expenses WHERE id = $1",
                 "SELECT phone_number FROM expenses WHERE id = $1",
                 expense_id
             )
+            if owner != user_id:
             if owner != phone_number:
                 return {"status": "error", "message": "Not authorized"}
-            
+
             # Build update query
-            updates = []
-            params = [expense_id]
-            param_num = 2
-            
-            if amount is not None:
-                updates.append(f"amount = ${param_num}")
-                params.append(amount)
-                param_num += 1
-            if category is not None:
-                updates.append(f"category = ${param_num}")
-                params.append(category)
-                param_num += 1
-            if note is not None:
-                updates.append(f"note = ${param_num}")
-                params.append(note)
-                param_num += 1
-            
-            if not updates:
-                return {"status": "error", "message": "No fields to update"}
-            
-            query = f"UPDATE expenses SET {', '.join(updates)} WHERE id = $1"
-            await conn.execute(query, *params)
-            
-            return {"status": "success", "message": "Expense updated"}
-        finally:
-            await db_pool.release(conn)
-    except Exception as e:
+@@ -125,17 +125,17 @@
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def delete_expense(phone_number: str, expense_id: int, **kwargs):
+async def delete_expense(user_id: str, expense_id: int):
+async def delete_expense(phone_number: str, expense_id: int):
     """Delete an expense (only if owned by user)."""
-    if kwargs:
-        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
-    
     try:
         conn = await get_conn()
         try:
             # Verify ownership
             owner = await conn.fetchval(
+                "SELECT user_id FROM expenses WHERE id = $1",
                 "SELECT phone_number FROM expenses WHERE id = $1",
                 expense_id
             )
+            if owner != user_id:
             if owner != phone_number:
                 return {"status": "error", "message": "Not authorized"}
-            
+
             await conn.execute("DELETE FROM expenses WHERE id = $1", expense_id)
-            return {"status": "success", "message": "Expense deleted"}
-        finally:
-            await db_pool.release(conn)
-    except Exception as e:
+@@ -146,7 +146,7 @@
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def get_summary(phone_number: str, start_date: str = None, end_date: str = None, **kwargs):
+async def get_summary(user_id: str, start_date: str = None, end_date: str = None):
+async def get_summary(phone_number: str, start_date: str = None, end_date: str = None):
     """Get expense summary by category."""
-    if kwargs:
-        print(f"⚠ Ignoring extra parameters: {list(kwargs.keys())}")
-    
     try:
         conn = await get_conn()
-        try:
-            if start_date and end_date:
+@@ -155,26 +155,26 @@
                 rows = await conn.fetch(
                     """SELECT category, SUM(amount) as total, COUNT(*) as count
                        FROM expenses
+                       WHERE user_id = $1 AND date BETWEEN $2 AND $3
                        WHERE phone_number = $1 AND date BETWEEN $2 AND $3
                        GROUP BY category ORDER BY total DESC""",
+                    user_id, start_date, end_date
                     phone_number, start_date, end_date
                 )
             else:
                 rows = await conn.fetch(
                     """SELECT category, SUM(amount) as total, COUNT(*) as count
+                       FROM expenses WHERE user_id = $1
                        FROM expenses WHERE phone_number = $1
                        GROUP BY category ORDER BY total DESC""",
+                    user_id
                     phone_number
                 )
             return [dict(row) for row in rows]
@@ -200,6 +163,5 @@ async def get_summary(phone_number: str, start_date: str = None, end_date: str =
 # START SERVER
 # ============================================================================
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     print("Starting Expense Tracker MCP Server")
-    mcp.run(transport="http", host="0.0.0.0", port=8081)
