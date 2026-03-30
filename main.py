@@ -38,14 +38,7 @@ async def get_conn():
 # ============================================================================
 
 @mcp.tool()
-async def add_expense(
-
-    phone_number: str,
-    date: str,
-    amount: float,
-    category: str,
-    note: str = ""                   
-):
+async def add_expense(phone_number: str, date: str, amount: float, category: str, note: str = ""):
     """Add a new expense. User ID isolates data."""
     try:
         conn = await get_conn()
@@ -62,10 +55,7 @@ async def add_expense(
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def list_expenses(phone_number: str,
-                         start_date: str = None,
-                           end_date: str = None,
-                           **kwargs):
+async def list_expenses(phone_number: str, start_date: str = None, end_date: str = None):
     """List all expenses for a user. Filtered by date if provided."""
     try:
         conn = await get_conn()
